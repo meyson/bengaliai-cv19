@@ -71,7 +71,7 @@ class BengaliDatasetTrain(Dataset):
             image = self.transform(image)
 
         return {
-            'image': image.float(),
+            'image': image,
             'grapheme_root': torch.tensor(self.grapheme_root[index], dtype=torch.long),
             'vowel_diacritic': torch.tensor(self.vowel_diacritic[index], dtype=torch.long),
             'consonant_diacritic': torch.tensor(self.consonant_diacritic[index], dtype=torch.long)

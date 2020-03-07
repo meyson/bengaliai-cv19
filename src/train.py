@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
+from matplotlib import pyplot as plt
 from sklearn.metrics import recall_score
 from torch.utils.data import DataLoader
 from torchvision import transforms as T
@@ -84,7 +85,8 @@ def main():
                                                      patience=5,
                                                      factor=0.3, verbose=True)
 
-    train_model(dataloaders, model, loss_fn, optimizer, scheduler, EPOCH)
+    model, history = train_model(dataloaders, model, loss_fn, optimizer, scheduler, EPOCH)
+    plot_graph(history, EPOCH)
 
 
 def macro_recall(pred_y, y, n_grapheme=168, n_vowel=11, n_consonant=7):
@@ -114,6 +116,13 @@ def loss_fn(outputs, targets):
 def train_model(dataloaders, model, criterion, optimizer, scheduler, num_epochs=25):
     best_model_wts = copy.deepcopy(model.state_dict())
     best_macro_recall = 0.0
+
+    history = {
+        'train_recall': [],
+        'train_loss': [],
+        'val_recall': [],
+        'val_loss': [],
+    }
 
     for epoch in range(num_epochs):
         print(f'Epoch {epoch}/{num_epochs - 1}')
@@ -167,8 +176,10 @@ def train_model(dataloaders, model, criterion, optimizer, scheduler, num_epochs=
             if phase == 'val':
                 scheduler.step(epoch_loss)
 
-            print('{} Loss: {:.4f} Macro recall: {:.4f}'.format(
-                phase, epoch_loss, macro_recall_score))
+            print(f'{phase} Loss: {epoch_loss:.4f} Macro recall: {macro_recall_score:.4f}')
+
+            history[f'{phase}_recall'].append(macro_recall_score)
+            history[f'{phase}_loss'].append(epoch_loss)
 
             # deep copy the model
             if phase == 'val' and macro_recall_score > best_macro_recall:
@@ -177,11 +188,33 @@ def train_model(dataloaders, model, criterion, optimizer, scheduler, num_epochs=
 
         print()
 
-    print('Best val Macro recall: {:4f}'.format(best_macro_recall))
+    print(f'Best val Macro recall: {best_macro_recall:4f}')
 
     # load best model weights
     model.load_state_dict(best_model_wts)
-    return model
+    return model, history
+
+
+def plot_graph(history, epoch):
+    val_loss, val_recall = history['val_loss'], history['val_recall']
+    train_loss, train_recall = history['train_loss'], history['train_recall']
+    epochsx = np.arange(epoch)
+
+    plt.subplot(3, 1, 1)
+    plt.title('Loss on train and validation sets')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.plot(epochsx, val_loss, '-^', label='val loss')
+    plt.plot(epochsx, train_loss, '-o', label='train loss')
+    plt.legend()
+
+    plt.subplot(3, 1, 2)
+    plt.title('Accuracy on train and validation sets')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.plot(epochsx, val_recall, '-^', label='val recall')
+    plt.plot(epochsx, train_recall, '-o', label='train recall')
+    plt.legend()
 
 
 if __name__ == '__main__':
