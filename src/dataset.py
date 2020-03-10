@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import torch
 from PIL import Image
@@ -8,9 +9,9 @@ from tqdm import tqdm
 class BengaliDatasetTrain(Dataset):
     def __init__(self,
                  folds,
-                 transform=None,
+                 aug=None,
                  preload=False,
-                 n_images=None):
+                 RGB=True):
         """ Intialize the BengaliDatasetTrain dataset
 
         Args:
@@ -18,17 +19,17 @@ class BengaliDatasetTrain(Dataset):
             - tranform: a custom tranform function
             - preload: if preload the dataset into memory
             - n_images: load specific number of items can be used for debugging purposes
+            - RGB: convert image to RGB
         """
+        self.folds = folds
         self.images = None
-        self.transform = transform
+        self.aug = aug
+        self.RGB = RGB
 
         df = pd.read_csv('data/train_folds.csv')
         df = df[df.kfold.isin(folds)].reset_index(drop=True)
 
         df = df[['image_id', 'grapheme_root', 'vowel_diacritic', 'consonant_diacritic', 'kfold']].reset_index(drop=True)
-
-        if n_images:
-            df = df[:n_images]
 
         self.image_id = df.image_id.values
         self.grapheme_root = df.grapheme_root.values
@@ -64,14 +65,25 @@ class BengaliDatasetTrain(Dataset):
             # If on-demand data loading
             image = Image.open(f'data/train_images/{self.image_id[index]}.png')
 
-        image = image.convert('RGB')
+        if self.RGB:
+            image = image.convert('RGB')
+
+        image = np.array(image)
+
         # May use transform function to transform samples
         # e.g., random crop, whitening
-        if self.transform is not None:
-            image = self.transform(image)
+        if self.aug is not None:
+            image = self.aug(image=image)['image']
+
+        image = image.astype(np.float32)
+
+        if self.RGB:
+            image = image.transpose((2, 0, 1))
+        else:
+            image = image[np.newaxis, :]
 
         return {
-            'image': image,
+            'image': torch.tensor(image, dtype=torch.float32),
             'grapheme_root': torch.tensor(self.grapheme_root[index], dtype=torch.long),
             'vowel_diacritic': torch.tensor(self.vowel_diacritic[index], dtype=torch.long),
             'consonant_diacritic': torch.tensor(self.consonant_diacritic[index], dtype=torch.long)
