@@ -12,7 +12,7 @@ class BengaliDatasetTrain(Dataset):
                  aug=None,
                  preload=False,
                  RGB=True):
-        """ Intialize the BengaliDatasetTrain dataset
+        """ Initialize the BengaliDatasetTrain dataset
 
         Args:
             - folds: number of folds to use
@@ -36,7 +36,7 @@ class BengaliDatasetTrain(Dataset):
         self.vowel_diacritic = df.vowel_diacritic.values
         self.consonant_diacritic = df.consonant_diacritic.values
 
-        # if preload dataset into memory
+        # preload dataset into memory
         if preload:
             self._preload()
 
