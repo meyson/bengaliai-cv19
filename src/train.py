@@ -1,5 +1,5 @@
 import ast
-import copy
+import glob
 import os
 
 import albumentations as A
@@ -16,50 +16,53 @@ from dataset import BengaliDatasetTrain
 from model_dispatcher import MODEL_DISPATCHER
 
 DEVICE = os.environ.get('DEVICE', 'cuda')
+
 IMG_HEIGHT = int(os.environ.get('IMG_HEIGHT', 137))
 IMG_WEIGHT = int(os.environ.get('IMG_WEIGHT', 236))
 EPOCH = int(os.environ.get('EPOCH', 25))
 
 TRAIN_BATCH_SIZE = int(os.environ.get('TRAIN_BATCH_SIZE', 16))
-TEST_BATCH_SIZE = int(os.environ.get('TEST_BATCH_SIZE', 8))
+VAL_BATCH_SIZE = int(os.environ.get('VAL_BATCH_SIZE', 8))
 PRELOAD_DATASET = os.environ.get('PRELOAD_DATASET', '0') == '1'
 
 BASE_MODEL = os.environ.get('BASE_MODEL', 'squeezenet')
+CHECKPOINT = os.environ.get('CHECKPOINT', '')
 
 TRAINING_FOLDS = ast.literal_eval(os.environ.get('TRAINING_FOLDS', '(0, 1, 2, 3)'))
 VALIDATION_FOLDS = ast.literal_eval(os.environ.get('VALIDATION_FOLDS', '(4, )'))
 
 RGB = os.environ.get('RGB', '0') == '1'
 
+ImageNetStat = {
+    'mean': [0.485, 0.456, 0.406],
+    'std': [0.229, 0.224, 0.225]
+}
+
+BengaliAIStat = {
+    'mean': [0.06922848809290576],
+    'std': [0.20515700083327537]
+}
+
+STAT = ImageNetStat if RGB else BengaliAIStat
+
 
 def main():
     model = MODEL_DISPATCHER[BASE_MODEL](pretrained=True, RGB=RGB)
     model.to(DEVICE)
 
-    ImageNetStat = {
-        'mean': [0.485, 0.456, 0.406],
-        'std': [0.229, 0.224, 0.225]
-    }
-
-    BengaliAIStat = {
-        'mean': [0.06922848809290576],
-        'std': [0.20515700083327537]
-    }
-
-    stat = ImageNetStat if RGB else BengaliAIStat
-
     train_dataset = BengaliDatasetTrain(
         folds=TRAINING_FOLDS,
         aug=A.Compose([
             A.Resize(IMG_HEIGHT, IMG_HEIGHT, always_apply=True),
-            A.ShiftScaleRotate(
-                shift_limit=0.0625,
-                scale_limit=0.2,
-                rotate_limit=5,
-                p=0.9
-            ),
-            A.GridDistortion(num_steps=5, distort_limit=0.4, p=1),
-            A.Normalize(**stat)
+            # A.ShiftScaleRotate(
+            #     shift_limit=0.0625,
+            #     scale_limit=0.1,
+            #     rotate_limit=0,
+            #     p=0.1
+            # ),
+            A.GridDistortion(num_steps=5, distort_limit=0.5, p=0.2),
+            # A.ElasticTransform(alpha=0, sigma=50, alpha_affine=13, p=0.7),
+            A.Normalize(**STAT)
         ]),
         preload=PRELOAD_DATASET,
         RGB=RGB
@@ -69,42 +72,97 @@ def main():
         folds=VALIDATION_FOLDS,
         aug=A.Compose([
             A.Resize(IMG_HEIGHT, IMG_WEIGHT, always_apply=True),
-            A.Normalize(**stat)
+            A.Normalize(**STAT)
         ]),
         preload=PRELOAD_DATASET,
         RGB=RGB
     )
 
     train_loader = DataLoader(
-        train_dataset,
+        dataset=train_dataset,
         batch_size=TRAIN_BATCH_SIZE,
         shuffle=True,
-        num_workers=4,
+        num_workers=8,
         pin_memory=True
     )
 
     val_loader = DataLoader(
-        val_dataset,
+        dataset=val_dataset,
         batch_size=TRAIN_BATCH_SIZE,
         shuffle=False,
-        num_workers=4,
+        num_workers=8,
         pin_memory=True
     )
 
-    print('N of parameters:', count_parameters(model))
-    optimizer = optim.Adam(model.parameters(), lr=1e-4)
+    optimizer = optim.Adam(model.parameters(), lr=1e-3)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer,
-                                                     mode='min',
+                                                     mode='max',
                                                      patience=5,
                                                      factor=0.3, verbose=True)
+    if CHECKPOINT:
+        print('Loading checkpoint...')
+        print(model.load_state_dict(torch.load(CHECKPOINT)))
 
-    print(model)
-    model, history = train_model(train_loader, val_loader, model, loss_fn, optimizer, scheduler, num_epochs=EPOCH)
+    # freeze new layers
+    # not_frozen = ['model.features.0', 'l0', 'l1', 'l2']
+    # for name, param in model.named_parameters():
+    #     if any(p in name for p in not_frozen):
+    #         continue
+    #     param.requires_grad = False
+
+    print('N of parameters:', count_parameters(model))
+
+    model, history = train_model(train_loader, val_loader, model, loss_fn,
+                                 optimizer, scheduler, num_epochs=EPOCH)
+    check_pretrained()
     plot_graph(history, EPOCH)
+
+
+def get_state_path(train_folds):
+    return f'pretrained_models/{BASE_MODEL}_train_folds_{train_folds}{"_rgb" if RGB else ""}.h5'
 
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def check_pretrained(train_folds=None, val_folds=None):
+    if not train_folds or not val_folds:
+        train_folds = [
+            (0, 1, 2, 3),
+            (0, 1, 2, 4),
+            (0, 1, 3, 4),
+            (0, 2, 3, 4),
+            (1, 2, 3, 4)
+        ]
+        val_folds = [(4,), (3,), (2,), (1,), (0,)]
+
+    for train_fold, val_fold in zip(train_folds, val_folds):
+        state_path = get_state_path(train_fold)
+        val_dataset = BengaliDatasetTrain(
+            folds=val_fold,
+            aug=A.Compose([
+                A.Resize(IMG_HEIGHT, IMG_WEIGHT, always_apply=True),
+                A.Normalize(**STAT)
+            ]),
+            RGB=RGB
+        )
+        val_loader = DataLoader(
+            dataset=val_dataset,
+            batch_size=VAL_BATCH_SIZE,
+            shuffle=False,
+            num_workers=8,
+            pin_memory=True
+        )
+        print(state_path)
+        print('val_folds: ', val_fold)
+
+        model = MODEL_DISPATCHER[BASE_MODEL](pretrained=False, RGB=RGB)
+        model.to(DEVICE)
+        model.load_state_dict(torch.load(state_path))
+
+        val_loss, val_macro_recall = check_accuracy(val_loader, model, loss_fn)
+        print(f'Val Loss: {val_loss:.4f} Macro recall: {val_macro_recall:.4f}')
 
 
 def macro_recall(pred_y, y, n_grapheme=168, n_vowel=11, n_consonant=7, verbose=False):
@@ -155,28 +213,27 @@ def check_accuracy(loader, model, criterion):
 
         final_outputs = torch.cat(final_outputs)
         final_targets = torch.cat(final_targets)
-        val_macro_recall = macro_recall(final_outputs, final_targets)
+        val_macro_recall = macro_recall(final_outputs, final_targets, verbose=True)
         val_loss = running_loss / len(loader)
         return val_loss, val_macro_recall
 
 
 def train_model(train_loader, val_loader, model, criterion,
                 optimizer, scheduler, history=None, num_epochs=25):
-    state_path = f'models/{BASE_MODEL}_train_folds_{train_loader.dataset.folds}{"_rgb" if RGB else ""}.h5'
+    state_path = get_state_path(train_loader.dataset.folds)
     if os.path.isfile(state_path):
         print(f'Checking accuracy of {state_path}')
-        best_model_wts = model.load_state_dict(torch.load(state_path))
-        _, best_macro_recall = check_accuracy(val_loader, model, criterion)
-        print(f'best_macro_recall {best_macro_recall}')
+        model.load_state_dict(torch.load(state_path))
+        best_macro_recall = check_accuracy(val_loader, model, criterion)[1]
     else:
-        best_model_wts = copy.deepcopy(model.state_dict())
         best_macro_recall = 0.0
+    print(f'initial recall={best_macro_recall}')
 
     if history is None:
         history = {'train_recall': [], 'train_loss': [], 'val_recall': [], 'val_loss': []}
 
     for epoch in range(num_epochs):
-        model.train()  # Set model to training mode
+        model.train()
 
         print(f'Epoch {epoch}/{num_epochs - 1}')
         print('-' * 10)
@@ -211,7 +268,7 @@ def train_model(train_loader, val_loader, model, criterion,
         final_outputs = torch.cat(final_outputs)
         final_targets = torch.cat(final_targets)
 
-        train_macro_recall = macro_recall(final_outputs, final_targets)
+        train_macro_recall = macro_recall(final_outputs, final_targets, verbose=True)
         train_loss = running_loss / len(train_loader)
         print(f'Train Loss: {train_loss:.4f} Macro recall: {train_macro_recall:.4f}')
 
@@ -227,7 +284,6 @@ def train_model(train_loader, val_loader, model, criterion,
 
         # deep copy the model
         if val_macro_recall > best_macro_recall:
-            best_model_wts = copy.deepcopy(model.state_dict())
             torch.save(model.state_dict(), state_path)
             best_macro_recall = val_macro_recall
 
@@ -236,7 +292,7 @@ def train_model(train_loader, val_loader, model, criterion,
     print(f'Best val Macro recall: {best_macro_recall:4f}')
 
     # load best model weights
-    model.load_state_dict(best_model_wts)
+    model.load_state_dict(torch.load(state_path))
     return model, history
 
 
@@ -245,21 +301,17 @@ def plot_graph(history, epoch):
     train_loss, train_recall = history['train_loss'], history['train_recall']
     epochsx = np.arange(epoch)
 
-    plt.subplot(3, 1, 1)
-    plt.title('Loss on train and validation sets')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.plot(epochsx, val_loss, '-^', label='val loss')
-    plt.plot(epochsx, train_loss, '-o', label='train loss')
-    plt.legend()
+    for metric, values in zip(['loss', 'recall'], ((val_loss, train_loss), (val_recall, train_recall))):
+        plt.subplot(3, 1, 1)
+        plt.title(f'{metric} on train and validation sets')
+        plt.xlabel('Epoch')
+        plt.ylabel(metric)
+        plt.plot(epochsx, values[0], '-^', label=f'val {metric}')
+        plt.plot(epochsx, values[1], '-o', label=f'train {metric}')
+        plt.legend()
+        plt.grid(True)
 
-    plt.subplot(3, 1, 2)
-    plt.title('Accuracy on train and validation sets')
-    plt.xlabel('Epoch')
-    plt.ylabel('Accuracy')
-    plt.plot(epochsx, val_recall, '-^', label='val recall')
-    plt.plot(epochsx, train_recall, '-o', label='train recall')
-    plt.legend()
+    plt.show()
 
 
 if __name__ == '__main__':

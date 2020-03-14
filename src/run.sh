@@ -1,13 +1,13 @@
 export DEVICE="cuda"
-export IMG_HEIGHT=68
-export IMG_WIDTH=118
-export EPOCH=80
-export TRAIN_BATCH_SIZE=64
-export TEST_BATCH_SIZE=16
-export BASE_MODEL="resnet18"
+export IMG_HEIGHT=137
+export IMG_WEIGHT=236
+export EPOCH=40
+export TRAIN_BATCH_SIZE=32
+export VAL_BATCH_SIZE=16
+export BASE_MODEL="squeezenet"
 export TRAINING_FOLDS_CSV="../input/train_folds.csv"
-export PRELOAD_DATASET=1
-export DEBUG=0
+export PRELOAD_DATASET=0
+# export CHECKPOINT="pretrained_models/.h5"
 
 
 export TRAINING_FOLDS="(0,1,2,3)"

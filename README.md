@@ -16,4 +16,4 @@ chmod +x run.sh && ./run.sh
 
 | Name      | # layers | # params| Test recall|
 |-----------|---------:|--------:|:---------------------:|
-|[SqueezeNet](https://github.com/meyson/bengaliai-cv19/blob/master/pretrained_models/squeezenet_train_folds_(0%2C%201%2C%202%2C%203).h5)   |    20    | 1.3M   | 0.95+|
+|[SqueezeNet](https://github.com/meyson/bengaliai-cv19/blob/master/pretrained_models/squeezenet_train_folds_(0%2C%201%2C%202%2C%203).h5)   |    -    | 1.3M   | 0.95+|

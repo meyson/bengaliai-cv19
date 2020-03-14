@@ -16,9 +16,8 @@ class BengaliDatasetTrain(Dataset):
 
         Args:
             - folds: number of folds to use
-            - tranform: a custom tranform function
+            - aug: albumentations
             - preload: if preload the dataset into memory
-            - n_images: load specific number of items can be used for debugging purposes
             - RGB: convert image to RGB
         """
         self.folds = folds
