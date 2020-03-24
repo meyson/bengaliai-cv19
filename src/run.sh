@@ -1,10 +1,20 @@
+if [ ! -d "data" ]; then
+  mkdir data
+  kaggle competitions download -c bengaliai-cv19
+  echo "Unzipping..."
+  unzip -q bengaliai-cv19.zip -d data
+  python3 src/create_folds.py
+  python3 src/create_train_images.py --format pkl
+fi
+
 export DEVICE="cuda"
 export IMG_HEIGHT=137
 export IMG_WEIGHT=236
 export EPOCH=40
-export TRAIN_BATCH_SIZE=32
+export TRAIN_BATCH_SIZE=16
 export VAL_BATCH_SIZE=16
-export BASE_MODEL="squeezenet"
+#export BASE_MODEL="squeezenet"
+export BASE_MODEL="efficientnet"
 export TRAINING_FOLDS_CSV="../input/train_folds.csv"
 export PRELOAD_DATASET=0
 # export CHECKPOINT="pretrained_models/.h5"

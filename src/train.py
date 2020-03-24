@@ -22,7 +22,7 @@ IMG_WEIGHT = int(os.environ.get('IMG_WEIGHT', 236))
 EPOCH = int(os.environ.get('EPOCH', 25))
 
 TRAIN_BATCH_SIZE = int(os.environ.get('TRAIN_BATCH_SIZE', 16))
-VAL_BATCH_SIZE = int(os.environ.get('VAL_BATCH_SIZE', 8))
+VAL_BATCH_SIZE = int(os.environ.get('VAL_BATCH_SIZE', 16))
 PRELOAD_DATASET = os.environ.get('PRELOAD_DATASET', '0') == '1'
 
 BASE_MODEL = os.environ.get('BASE_MODEL', 'squeezenet')
@@ -31,7 +31,7 @@ CHECKPOINT = os.environ.get('CHECKPOINT', '')
 TRAINING_FOLDS = ast.literal_eval(os.environ.get('TRAINING_FOLDS', '(0, 1, 2, 3)'))
 VALIDATION_FOLDS = ast.literal_eval(os.environ.get('VALIDATION_FOLDS', '(4, )'))
 
-RGB = os.environ.get('RGB', '0') == '1'
+USE_RGB = os.environ.get('USE_RGB', '0') == '1'
 
 ImageNetStat = {
     'mean': [0.485, 0.456, 0.406],
@@ -43,29 +43,34 @@ BengaliAIStat = {
     'std': [0.20515700083327537]
 }
 
-STAT = ImageNetStat if RGB else BengaliAIStat
+STAT = ImageNetStat if USE_RGB else BengaliAIStat
 
 
 def main():
-    model = MODEL_DISPATCHER[BASE_MODEL](pretrained=True, RGB=RGB)
+    model = MODEL_DISPATCHER[BASE_MODEL](pretrained=True, use_rgb=USE_RGB)
     model.to(DEVICE)
 
     train_dataset = BengaliDatasetTrain(
         folds=TRAINING_FOLDS,
         aug=A.Compose([
             A.Resize(IMG_HEIGHT, IMG_HEIGHT, always_apply=True),
-            # A.ShiftScaleRotate(
-            #     shift_limit=0.0625,
-            #     scale_limit=0.1,
-            #     rotate_limit=0,
-            #     p=0.1
-            # ),
-            A.GridDistortion(num_steps=5, distort_limit=0.5, p=0.2),
-            # A.ElasticTransform(alpha=0, sigma=50, alpha_affine=13, p=0.7),
-            A.Normalize(**STAT)
+            A.ShiftScaleRotate(
+                shift_limit=0.0625,
+                scale_limit=0.1,
+                rotate_limit=0,
+                p=0.2
+            ),
+            # A.GridDistortion(num_steps=5, distort_limit=0.5, p=1),
+            # A.CoarseDropout(p=0.1),
+            # A.ElasticTransform(alpha=0, sigma=50, alpha_affine=13, p=0.1),
+            A.GridDistortion(num_steps=5, distort_limit=0.5, p=0.5),
+            # A.CoarseDropout(max_holes=5, max_height=15, max_width=15, p=0.1),
+            A.Normalize(**STAT),
+            A.CoarseDropout(max_holes=2, max_height=36, max_width=56, p=0.5, fill_value=0)
         ]),
         preload=PRELOAD_DATASET,
-        RGB=RGB
+        data_format='pkl',
+        use_rgb=USE_RGB
     )
 
     val_dataset = BengaliDatasetTrain(
@@ -75,26 +80,25 @@ def main():
             A.Normalize(**STAT)
         ]),
         preload=PRELOAD_DATASET,
-        RGB=RGB
+        data_format='pkl',
+        use_rgb=USE_RGB
     )
 
     train_loader = DataLoader(
         dataset=train_dataset,
         batch_size=TRAIN_BATCH_SIZE,
         shuffle=True,
-        num_workers=8,
         pin_memory=True
     )
 
     val_loader = DataLoader(
         dataset=val_dataset,
-        batch_size=TRAIN_BATCH_SIZE,
+        batch_size=VAL_BATCH_SIZE,
         shuffle=False,
-        num_workers=8,
         pin_memory=True
     )
 
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = optim.Adam(model.parameters(), lr=1e-7)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer,
                                                      mode='max',
                                                      patience=5,
@@ -119,7 +123,7 @@ def main():
 
 
 def get_state_path(train_folds):
-    return f'pretrained_models/{BASE_MODEL}_train_folds_{train_folds}{"_rgb" if RGB else ""}.h5'
+    return f'pretrained_models/{BASE_MODEL}_train_folds_{train_folds}{"_rgb" if USE_RGB else ""}.h5'
 
 
 def count_parameters(model):
@@ -145,19 +149,18 @@ def check_pretrained(train_folds=None, val_folds=None):
                 A.Resize(IMG_HEIGHT, IMG_WEIGHT, always_apply=True),
                 A.Normalize(**STAT)
             ]),
-            RGB=RGB
+            use_rgb=USE_RGB
         )
         val_loader = DataLoader(
             dataset=val_dataset,
             batch_size=VAL_BATCH_SIZE,
             shuffle=False,
-            num_workers=8,
             pin_memory=True
         )
         print(state_path)
         print('val_folds: ', val_fold)
 
-        model = MODEL_DISPATCHER[BASE_MODEL](pretrained=False, RGB=RGB)
+        model = MODEL_DISPATCHER[BASE_MODEL](pretrained=True, use_rgb=USE_RGB)
         model.to(DEVICE)
         model.load_state_dict(torch.load(state_path))
 
@@ -218,12 +221,11 @@ def check_accuracy(loader, model, criterion):
         return val_loss, val_macro_recall
 
 
-def train_model(train_loader, val_loader, model, criterion,
-                optimizer, scheduler, history=None, num_epochs=25):
+def train_model(train_loader, val_loader, model, criterion, optimizer, scheduler, history=None, num_epochs=25):
     state_path = get_state_path(train_loader.dataset.folds)
-    if os.path.isfile(state_path):
+    if not os.path.isfile(state_path):
         print(f'Checking accuracy of {state_path}')
-        model.load_state_dict(torch.load(state_path))
+        model.load_state_dict(torch.load(state_path), strict=False)
         best_macro_recall = check_accuracy(val_loader, model, criterion)[1]
     else:
         best_macro_recall = 0.0
@@ -233,7 +235,7 @@ def train_model(train_loader, val_loader, model, criterion,
         history = {'train_recall': [], 'train_loss': [], 'val_recall': [], 'val_loss': []}
 
     for epoch in range(num_epochs):
-        model.train()
+        model.train()  # Set model to training mode
 
         print(f'Epoch {epoch}/{num_epochs - 1}')
         print('-' * 10)

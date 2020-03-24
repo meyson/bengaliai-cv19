@@ -1,3 +1,4 @@
+joblib
 PIL
 pandas
 albumentations
